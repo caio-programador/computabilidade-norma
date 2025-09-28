@@ -1,165 +1,165 @@
-from typing import List, Dict, Tuple
 import re
-
-LABEL_RE = re.compile(r'^\s*([0-9]+)\s*:\s*(.+)$', re.IGNORECASE)
-COMMENT_RE = re.compile(r'#.*$')
+from typing import Dict, Tuple, List, Any
 
 
-def run_norma(program: Dict[int, Dict], start_label:int, regs:List[int], max_steps=100000) -> Tuple[List[Tuple[int, Tuple[int,...]]], str]:
-    """
-    Programa Norma com fim automático para rótulos inexistentes.
-    """
-    label_index = {label: label for label in program.keys()}
-    trace = []
-    pc = start_label
-    steps = 0
-    error = ''
+PADRAO_ROTULO = re.compile(r'^\s*([0-9]+)\s*:\s*(.+)$', re.IGNORECASE)   # Representa o rótulo, que é um numero seguido de :
+PADRAO_COMENTARIO = re.compile(r'#.*$')                                         # para ignorar os comentários
 
-    while True:
-        if steps > max_steps:
-            error = 'Máximo de passos excedido (loop infinito provável).'
-            break
-        if pc not in program:
-            # rótulo não existe: encerra como fim automático
-            break
-
-        instr = program[pc]
-        # registra estado atual
-        trace.append((pc, tuple(regs)))
-        t = instr.get('type')
-
-        if t == 'if_zero':
-            reg = instr['reg']
-            if reg < 0 or reg >= len(regs):
-                error = f"Referência a registrador inválido {reg} em label {pc}"
-                break
-            dest = instr['then'] if regs[reg] == 0 else instr['else']
-            if dest not in label_index:
-                # salto para rótulo inexistente = fim automático
-                trace.append((dest, tuple(regs)))
-                break
-            pc = dest
-            steps += 1
-            continue
-
-        elif t in ('add', 'sub'):
-            reg = instr['reg']
-            if reg < 0 or reg >= len(regs):
-                error = f"Referência a registrador inválido {reg} em label {pc}"
-                break
-            if t == 'add':
-                regs[reg] += 1
-            else:
-                if regs[reg] > 0:
-                    regs[reg] -= 1
-            dest = instr['goto']
-            if dest not in label_index:
-                trace.append((dest, tuple(regs)))
-                break
-            pc = dest
-            steps += 1
-            continue
-
-        elif t == 'goto':
-            dest = instr['goto']
-            if dest not in label_index:
-                trace.append((dest, tuple(regs)))
-                break
-            pc = dest
-            steps += 1
-            continue
-
-        else:
-            error = f"Instrução desconhecida no label {pc}: {instr}"
-            break
-
-    return trace, error
-
-# A helper to patch block-local gotos produced by macro expansion into absolute labels:
-def assign_block_labels_and_patch(block_instrs: List[Dict], following_label:int) -> List[Dict]:
-    """
-    Given a block of instr dicts produced by macro expander in block-index style,
-    patch special_end to goto 'following_label', and convert 'goto_block_idx' into numeric gotos if present.
-    The block here is small; we assume internal gotos that reference block indices use numeric labels within block in the
-    sense that instructions refer to numeric 'goto' equal to some block index (0-based). We used small indexes in expansions.
-    For safety, if an instruction has 'goto_block_idx' or 'special_end', we patch appropriately.
-    """
-    n = len(block_instrs)
-    return block_instrs
+"""
+Converte o nome do registrador 'a','b'... para o índice 0,1,...
+"""
+def nome_para_indice_registrador(nome: str) -> int:
+    """Converte 'a'..'z' -> 0..25, valida nome."""
+    if not isinstance(nome, str):
+        raise ValueError("Nome de registrador deve ser string.")
+    s = nome.strip().lower()
+    if len(s) != 1 or not ('a' <= s <= 'z'):
+        raise ValueError(f"Nome de registrador inválido: '{nome}'")
+    return ord(s) - ord('a')
 
 
-def regname_to_index(name: str) -> int:
-    """Converts register name 'a','b'... to index 0,1,..."""
-    name = name.strip().lower()
-    if len(name) != 1 or not ('a' <= name <= 'z'):
-        raise ValueError(f"Nome de registrador inválido: {name}")
-    return ord(name) - ord('a')
-
-def parse_line_instruction(instr_text: str):
-    """
-    Parse a single instruction string (without label).
-    Accepts:
-      se zero_a então vá_para 9 senão vá_para 2
-      faça add_a vá_para 3
-      faça sub_b vá_para 1
-      macro MUL a b c   (handled elsewhere)
-    Returns a dict representing the instruction or a macro tuple.
-    """
-    t = instr_text.strip()
-    t = COMMENT_RE.sub('', t).strip()
+"""
+    Analisa uma única string de instrução (sem rótulo).
+    Essa função irá verificar se a instrução escrita na linha se adequa em alguma das intruções aceitas.
+    Caso sim, retorna uma tupla com a respectiva isntrução, registradores e rótulos.
+"""
+def analisar_instrucao_linha(texto_instr: str) -> Tuple:
+    t = PADRAO_COMENTARIO.sub('', texto_instr).strip()
     if t == '':
-        return ('empty',)
-    m = re.match(r'^(MUL)\s+([a-z])\s+([a-z])\s+([a-z])$', t, re.IGNORECASE)
-    if m:
-        return ('macro_mul', m.group(2).lower(), m.group(3).lower(), m.group(4).lower())
-    m = re.match(r'^(DIV)\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])$', t, re.IGNORECASE)
-    if m:
-        return ('macro_div', m.group(2).lower(), m.group(3).lower(), m.group(4).lower(), m.group(5).lower())
-    m = re.match(r'^(POW)\s+([a-z])\s+([0-9]+)\s+([a-z])$', t, re.IGNORECASE)
-    if m:
-        return ('macro_pow', m.group(2).lower(), int(m.group(3)), m.group(4).lower())
+        return ('vazio',)
 
-    m = re.match(r'^se\s+zero_([a-z])\s+ent[oó]o\s+v[aá]_[pP]ara\s+([0-9]+)\s+sen[oõ]o\s+v[aá]_[pP]ara\s+([0-9]+)$', t, re.IGNORECASE)
+    # Identifica a MACRO correspondente. Macros: IGUAL a b c | MAIOR a b c d | MENOR a b c
+    m = re.match(r'^(IGUAL)\s+([a-z])\s+([a-z])\s+([a-z])$', t, re.IGNORECASE)
     if m:
-        return ('if_zero', m.group(1).lower(), int(m.group(2)), int(m.group(3)))
-    m = re.match(r'^fa(c|ç)a\s+add_([a-z])\s+v[aá]_[pP]ara\s+([0-9]+)$', t, re.IGNORECASE)
+        return ('macro_igual', m.group(2).lower(), m.group(3).lower(), m.group(4).lower())
+
+    m = re.match(r'^(MAIOR)\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])$', t, re.IGNORECASE)
     if m:
-        return ('add', m.group(2).lower(), int(m.group(3)))
-    m = re.match(r'^fa(c|ç)a\s+sub_([a-z])\s+v[aá]_[pP]ara\s+([0-9]+)$', t, re.IGNORECASE)
+        return ('macro_maior', m.group(2).lower(), m.group(3).lower(), m.group(4).lower(), m.group(5).lower())
+
+    m = re.match(r'^(MENOR)\s+([a-z])\s+([a-z])\s+([a-z])$', t, re.IGNORECASE)
     if m:
-        return ('sub', m.group(2).lower(), int(m.group(3)))
-    m = re.match(r'^se\s+zero[_\s]?([a-z])\s+ent[oó]o\s+v[aá]a?[_\s]para\s+([0-9]+)\s+sen[oõ]o\s+v[aá]a?[_\s]para\s+([0-9]+)$', t, re.IGNORECASE)
-    if m:
-        return ('if_zero', m.group(1).lower(), int(m.group(2)), int(m.group(3)))
+        return ('macro_menor', m.group(2).lower(), m.group(3).lower(), m.group(4).lower())
+
+    # instruções primitivas
+    # se zero_x então vá_para A senão vá_para B
     m = re.match(r'^se\s+zero[_\s]?([a-z])\s+.*?([0-9]+)\s+.*?([0-9]+)$', t, re.IGNORECASE)
     if m:
-        return ('if_zero', m.group(1).lower(), int(m.group(2)), int(m.group(3)))
+        return ('se_zero', m.group(1).lower(), int(m.group(2)), int(m.group(3)))
 
-    m = re.match(r'^(add|sub)_([a-z])\s+v[aá]a?[_\s]para\s+([0-9]+)$', t, re.IGNORECASE)
+    # faça add_x vá_para N
+    m = re.match(r'^(?:fa(c|ç)a\s+)?(?:add|adicionar)[_\s]?([a-z])\s+.*?([0-9]+)$', t, re.IGNORECASE)
     if m:
-        typ = m.group(1).lower()
-        if typ == 'add':
-            return ('add', m.group(2).lower(), int(m.group(3)))
-        else:
-            return ('sub', m.group(2).lower(), int(m.group(3)))
+        return ('adicionar', m.group(2).lower(), int(m.group(3)))
 
-    raise ValueError(f"Instrução inválida ou não reconhecida: '{instr_text}'")
+    # faça sub_x vá_para N
+    m = re.match(r'^(?:fa(c|ç)a\s+)?(?:sub|subtrair)[_\s]?([a-z])\s+.*?([0-9]+)$', t, re.IGNORECASE)
+    if m:
+        return ('subtrair', m.group(2).lower(), int(m.group(3)))
 
-def parse_program_text(text: str) -> Dict[int, Tuple]:
-    """
-    Returns a dict label -> parsed instruction (or macro tuple).
-    """
-    lines = text.splitlines()
-    program = {}
-    for raw in lines:
-        line = raw.strip()
-        if line == '' or line.lstrip().startswith('#'):
+    # se a linha não corresponder a nenhum  dos padrões da linguagem, gera um erro
+    raise ValueError(f"Instrução inválida ou não reconhecida: '{texto_instr}'")
+
+"""
+    Esta função coordena a análise linha por linha. Ela lê todo o  programa, separa-o em linhas e, para cada linha, 
+    chama analisar_instrucao_linha. O resultado é um dicionário que mapeia cada rótulo do seu programa para sua 
+    representação estruturada.
+"""
+def analisar_texto_programa(texto: str) -> Dict[int, Tuple]:
+    linhas = texto.splitlines()
+    programa = {}
+    for raw in linhas:
+        linha = raw.strip()
+        if linha == '' or linha.startswith('#'):
             continue
-        m = LABEL_RE.match(line)
+        m = PADRAO_ROTULO.match(linha)
         if not m:
-            raise ValueError(f"Linha com formato errado (esperado 'label: instr'): '{line}'")
-        label = int(m.group(1))
+            raise ValueError(f"Linha com formato errado (esperado 'rotulo: instr'): '{linha}'")
+        rotulo = int(m.group(1))
         instr = m.group(2).strip()
-        parsed = parse_line_instruction(instr)
-        program[label] = parsed
-    return program
+        analisado = analisar_instrucao_linha(instr)     # Chama função para analisar a linha
+        programa[rotulo] = analisado
+    return programa
+
+
+"""
+É uma das funções principais. Ela executa o programa expandido instrução por instrução, simulando o comportamento 
+da máquina Norma.
+"""
+def rodar_norma(programa: Dict[int, Dict], rotulo_inicial: int, regs: List[int], max_passos=100000) -> Tuple[
+    List[Tuple[int, Tuple[int, ...]]], str]:
+    traco = []              # Serve para armazenar o histórico de execução (trace) do programa.
+    pc = rotulo_inicial     # Program counter (para indicar qual instrução deve ser executada)
+    passos = 0
+    erro = ''
+    rotulos_validos = set(programa.keys())
+
+    # Executa as instrções até o final do programa
+    while True:
+        if passos > max_passos:     # Se o programa fizer mais de 100 mil passos, provavelmente é infinito
+            erro = "Máximo de passos excedido (loop provável)."
+            break
+        if pc not in programa:      # se o pc apontar para um rotulo que não existe, acaba o programa
+            break
+
+        instr = programa[pc]                # pega a instrução atual
+        traco.append((pc, tuple(regs)))     # adicona o estado atual e os valores dos registradores
+        t = instr.get('tipo')               # t armazena o tipo da instrução
+
+        # se_zero: Checa o valor de um registrador. Se for zero, atualiza o pc para o rótulo de destino entao. Caso contrário, atualiza para o rótulo senao
+        if t == 'se_zero':
+            reg = instr['reg']
+            if not (0 <= reg < len(regs)):
+                erro = f"Referência a registrador inválido {reg} em label {pc}"
+                break
+            ent = instr['entao']
+            sen = instr['senao']
+            destino = ent if regs[reg] == 0 else sen
+            if destino not in rotulos_validos:
+                traco.append((destino, tuple(regs)))
+                break
+            pc = destino
+
+        # adicionar: Incrementa o registrador e atualiza o pc para o rótulo de destino ir_para
+        elif t == 'adicionar':
+            reg = instr['reg']
+            if not (0 <= reg < len(regs)):
+                erro = f"Referência a registrador inválido {reg} em label {pc}"
+                break
+            regs[reg] += 1
+            destino = instr['ir_para']
+            if destino not in rotulos_validos:
+                traco.append((destino, tuple(regs)))
+                break
+            pc = destino
+
+        # subtrair: decrementa o registrador e atualiza o pc para o rótulo de destino ir_para
+        elif t == 'subtrair':
+            reg = instr['reg']
+            if not (0 <= reg < len(regs)):
+                erro = f"Referência a registrador inválido {reg} em label {pc}"
+                break
+            if regs[reg] > 0:
+                regs[reg] -= 1
+            destino = instr['ir_para']
+            if destino not in rotulos_validos:
+                traco.append((destino, tuple(regs)))
+                break
+            pc = destino
+
+        # ir_para: Apenas atualiza o pc para o rótulo de destino
+        elif t == 'ir_para':
+            destino = instr['ir_para']
+            if destino not in rotulos_validos:
+                traco.append((destino, tuple(regs)))
+                break
+            pc = destino
+
+        # instruções desconhecidas
+        else:
+            erro = f"Instrução desconhecida no label {pc}: {instr}"
+            break
+
+        passos += 1
+
+    return traco, erro
