@@ -1,0 +1,4 @@
+# Verifica se dois números são iguais
+# SE zero_c = IGUAL senão DIFERENTES
+1: IGUAL a b c
+# Fim

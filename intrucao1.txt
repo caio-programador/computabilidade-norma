@@ -1,0 +1,7 @@
+# Dado 2 array de 2 elementos cada
+# Calcule o maior de cada array e verifique se são iguais
+# se i = 1 então é igual
+1: MAIOR a b c d
+2: MAIOR e f g h
+3: IGUAL d h i
+# FIM

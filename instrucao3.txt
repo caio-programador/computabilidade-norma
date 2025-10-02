@@ -1,0 +1,8 @@
+# Soma a + b e coloca em c
+1: se zero_a então vá_para 4 senão vá_para 2
+2: faça sub_a vá_para 3
+3: faça add_c vá_para 1
+4: se zero_b então vá_para 7 senão vá_para 5
+5: faça sub_b vá_para 6
+6: faça add_c vá_para 4
+# Fim
